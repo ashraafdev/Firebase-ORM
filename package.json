@@ -1,0 +1,15 @@
+{
+  "name": "@ashraafdev/firebase-orm",
+  "version": "1.0.0",
+  "description": "Manager your firestore collection as entities, currently on dev & test mode",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "firebase",
+    "firestore"
+  ],
+  "author": "Achraf Hebboul",
+  "license": "ISC"
+}

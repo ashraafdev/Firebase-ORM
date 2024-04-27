@@ -1,13 +1,24 @@
-import {Firestore} from "@firebase/firestore";
-import {OrderByDirection, QueryFieldFilterConstraint, QueryOrderByConstraint, addDoc, collection, getDocs, orderBy, query, where, doc, updateDoc} from '@firebase/firestore';
+import { Firestore, OrderByDirection, WriteBatch, getDocsFromServer, query, writeBatch } from "firebase/firestore";
+import { QueryFieldFilterConstraint, QueryOrderByConstraint, addDoc, collection, getDocs, orderBy, Query, where, doc, updateDoc, increment } from 'firebase/firestore';
+import { FirebaseApp, initializeApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
 
 // abstract class to create instance for various collections
 export default abstract class FirestoreORM {
+    // firebase config object
+    static firebaseConfig: object = {};
+
+    // firebase app
+    static firebaseApp: FirebaseApp
+
     // firestore database instance
-    firestoreDatabase: Firestore;
+    static firestoreDatabase: Firestore;
 
     // set the collection name
-    static collection = null;
+    static collection: string;
+
+    // set fillables
+    static fillables: string[] = [];
 
     // define if timestamp is allowed
     timestamp: Boolean = true;
@@ -21,36 +32,57 @@ export default abstract class FirestoreORM {
     deleted_at: Date | null = null;
 
     // where conditions
-    static whereConditions: QueryFieldFilterConstraint[] = [];
+    whereConditions: QueryFieldFilterConstraint[] = [];
 
     // orderBy conditions
-    static orderByConditions: QueryOrderByConstraint[] = [];
+    orderByConditions: QueryOrderByConstraint[] = [];
 
-    static willUpdateAttribues: object = {};
+    willUpdateAttribues: object = {};
+
+    static #willUpdateAttributesBatchOperations: any[] = [];
+
+    static INCREMENT: number = 1;
+
+    static #batchWrite: boolean = false;
+    static #batch: WriteBatch;
 
     // construct an instance of the collection, not saved
-    constructor(firestoreDatabase: Firestore, ...args: any[]) {
-
-        // save firestore database instance
-        this.firestoreDatabase = firestoreDatabase;
+    constructor(...args: any[]) {
+        if (!Object.keys(FirestoreORM.firebaseConfig).length) throw new Error("Firebase config not setted up!")
 
         // access to fillables of the child through this.contructor
-        let fillables = this.constructor.fillable;
-
+        let fillables = eval(`${this.constructor.name}.fillables`);
+        
         // match property with the it's value
         [...args].forEach((argValue, argPos) => {
-            this[fillables[argPos]] = argValue
+            this[fillables[argPos]] = argValue;
         });
-
+        
         // define a creation timestamp for the instance
         this.created_at = new Date();
     }
 
+    static configure(appConfig: object) {
+        if (Object.keys(this.firebaseConfig).length) return;
+
+        // assign firebase config
+        this.firebaseConfig = appConfig;
+
+        // create firebase app instance
+        this.firebaseApp = initializeApp(this.firebaseConfig);
+
+        // save firestore database instance
+        this.firestoreDatabase = getFirestore(this.firebaseApp);
+    }
+
     async save() {
+        let collectionName = eval(`${this.constructor.name}.collection`);
+        let fillables = eval(`${this.constructor.name}.fillables`);
+
         const model_properties = {};
     
         // match the model properties with it's appropriate value
-        Object.getOwnPropertyNames(this).forEach((propertyName) => {
+        fillables.forEach((propertyName) => {
             model_properties[propertyName] = this[propertyName];
         });
 
@@ -62,46 +94,83 @@ export default abstract class FirestoreORM {
         if (this.softDelete)
             Object.assign(model_properties, {deleted_at: this.deleted_at});
 
-        try {
-            // add document to firestore
-            await addDoc(collection(this.firestoreDatabase, this.constructor.collection), model_properties);
+
+        // add document to firestore
+        if (FirestoreORM.batchWriteStarted()) {
+            FirestoreORM.#willUpdateAttributesBatchOperations.push({
+                type: "set",
+                collection: collectionName,
+                docId: doc(collection(FirestoreORM.firestoreDatabase, collectionName)),
+                field: model_properties,
+            });
+
             return true;
-        } catch (err) {
-            throw new Error(err.message);
-        }
+        } else
+            var newDoc = await addDoc(collection(FirestoreORM.firestoreDatabase, collectionName), model_properties);
+
+        return newDoc.id;
     }
 
     where(field: string, operator, values) {
-        this.constructor.whereConditions = [
-            ...this.constructor.whereConditions, where(field, operator, values),
+        this.whereConditions = [
+            ...this.whereConditions, where(field, operator, values),
         ];
 
         return this;
     }
 
     orderBy(column: string, order: OrderByDirection = 'asc') {
-        this.constructor.orderByConditions = [
-            ...this.constructor.orderByConditions, orderBy(column, order),
+        this.orderByConditions = [
+            ...this.orderByConditions, orderBy(column, order),
         ];
 
         return this;
     }
 
-    set(paramsToUpdate: any[]) {
-        paramsToUpdate.forEach((param) => Object.assign(this.constructor.willUpdateAttribues, param));
+    set(field: string, value: any, operation?: number) {
+        let updateTarget = {};
+
+        switch (operation) {
+            case 1:
+                updateTarget[field] = increment(value);
+                Object.assign(this.willUpdateAttribues, updateTarget);
+                
+                break;
+            default:
+                updateTarget[field] = value;
+                Object.assign(this.willUpdateAttribues, updateTarget);
+                
+                break;
+        }
+
+        //paramsToUpdate.forEach((param) => Object.assign(this.willUpdateAttribues, param));
         return this;
     }
 
     async update() {
+        var collectionName = eval(`${this.constructor.name}.collection`);
+        //let fillables = eval(`${this.constructor.name}.fillables`);
+
         try {
             const docData = await this.fetchone();
-            const refOfDocument = doc(this.firestoreDatabase, this.constructor.collection, docData.id);
 
-            await updateDoc(refOfDocument, this.constructor.willUpdateAttribues);
+            console.log(FirestoreORM.batchWriteStarted());
 
-            this.constructor.whereConditions = [];
-            this.constructor.orderByConditions = [];
-            this.constructor.willUpdateAttribues = {};
+            if (FirestoreORM.batchWriteStarted()) {
+                FirestoreORM.#willUpdateAttributesBatchOperations.push({
+                    type: "update",
+                    collection: collectionName,
+                    docId: docData.id,
+                    field: this.willUpdateAttribues,
+                });
+            } else {
+                const refOfDocument = doc(FirestoreORM.firestoreDatabase, collectionName, docData.id);
+                await updateDoc(refOfDocument, this.willUpdateAttribues);
+            }
+
+            this.whereConditions = [];
+            this.orderByConditions = [];
+            this.willUpdateAttribues = {};
 
             return true;
         } catch (err) {
@@ -110,29 +179,33 @@ export default abstract class FirestoreORM {
     }
 
     async fetchone() {
+        let collectionName = eval(`${this.constructor.name}.collection`);
+
         try {
             // create query from chain conditions
-            let q = query(collection(this.firestoreDatabase, this.constructor.collection), ...this.constructor.whereConditions, ...this.constructor.orderByConditions);
+            let q = query(collection(FirestoreORM.firestoreDatabase, collectionName), ...this.whereConditions, ...this.orderByConditions);
 
             // run the query
-            const querySnapshot = await getDocs(q);
+            const querySnapshot = await getDocsFromServer(q);
             
-            this.constructor.whereConditions = [];
-            this.constructor.orderByConditions = [];
+            this.whereConditions = [];
+            this.orderByConditions = [];
            
             // get first element
-            if (querySnapshot.docs.length) return {id: querySnapshot.docs[0].id, data: querySnapshot.docs[0].data()};
-            
-            return null;
+            if (!querySnapshot.empty) return {id: querySnapshot.docs[0].id, data: querySnapshot.docs[0].data(), empty: false};
+    
+            return {id: null, data: null, empty: true};
         } catch (err) {
             throw new Error(err.message);
         }
     }
 
     async fectchall() {
+        let collectionName = eval(`${this.constructor.name}.collection`);
+
         try {
             // create query from chain conditions
-            let q = query(collection(this.firestoreDatabase, this.constructor.collection), ...this.constructor.whereConditions, ...this.constructor.orderByConditions);
+            let q = query(collection(FirestoreORM.firestoreDatabase, collectionName), ...this.whereConditions, ...this.orderByConditions);
 
             // array of result;
             let result: object[] = [];
@@ -146,12 +219,41 @@ export default abstract class FirestoreORM {
                 result = [...result, {id: doc.id, data: doc.data()}];
             });
 
-            this.constructor.whereConditions = [];
-            this.constructor.orderByConditions = [];
+            this.whereConditions = [];
+            this.orderByConditions = [];
 
             return result;
         } catch (err) {
             throw new Error(err.message);
         }
+    }
+
+    static startBatchWrite() {
+        this.#batchWrite = true;
+        this.#batch = writeBatch(FirestoreORM.firestoreDatabase);
+    }
+
+    static batchWriteStarted() {
+        return FirestoreORM.#batchWrite;
+    }
+
+    static async commitBatch() {
+        FirestoreORM.#willUpdateAttributesBatchOperations.forEach(operation => {
+
+            switch (operation.type) {
+                case "set":
+                    this.#batch.set(operation.docId, operation.field);
+                    break;
+                case "update":
+                    this.#batch.update(doc(
+                        this.firestoreDatabase, operation.collection, operation.docId,
+                    ), operation.field);
+                    break;
+            }
+
+        });
+
+        this.#batchWrite = false;
+        await this.#batch.commit();
     }
 }

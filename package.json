@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "name": "@ashraafdev/firebase-orm",
   "version": "1.0.0",
   "description": "Manager your firestore collection as entities, currently on dev & test mode",
@@ -13,7 +14,6 @@
   "author": "Achraf Hebboul",
   "license": "ISC",
   "dependencies": {
-    "@firebase/app": "^0.10.1",
-    "@firebase/firestore": "^4.6.0"
+    "firebase": "^10.11.0"
   }
 }

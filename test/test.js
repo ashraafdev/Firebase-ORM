@@ -1,3 +1,4 @@
+import FirestoreORM from "../index";
 import "./config/database.js";
 import TestModel from "./models/TestModel.js";
 
@@ -135,6 +136,22 @@ test("get data with a limit of 2", async () => {
     ],
   });
 });
+
+test("add third doc", async () => {
+  const docId = await new TestModel("5", "Test 5", "This One will be deleted").save();
+  theDocId = docId;
+  expect(typeof docId).toEqual('string');
+})
+
+test("delete lastname in the third doc using doc id", async () => {
+  const result = await new TestModel().doc(theDocId).set('lastname', null, FirestoreORM.DELETE_FIELD).update();
+  expect(result).toEqual(true);
+})
+
+test("delete firstname in the third doc using where", async () => {
+  const result = await new TestModel().where('firstname', '==', 'Test 5').set('firstname', null, FirestoreORM.DELETE_FIELD).update();
+  expect(result).toEqual(true);
+})
 
 /*test("getting doc with limit", async () => {
     const data = await new TestModel().where('id', '==', '1').limit()

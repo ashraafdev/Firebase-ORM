@@ -1,8 +1,8 @@
 {
   "type": "module",
-  "name": "@ashraafdev/firebase-orm",
-  "version": "1.0.0",
-  "description": "Manager your firestore collection as entities, currently on dev & test mode",
+  "name": "@ashraafdev/firestore-orm",
+  "version": "0.0.1",
+  "description": "Manager your firestore collection as entities",
   "main": "index.ts",
   "scripts": {
     "test": "jest"

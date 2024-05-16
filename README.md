@@ -6,5 +6,11 @@
 
 FirestoreORM is a Javascript package for dealing firebase firestore queries. This package is for reducing headaches operations by simplfiying firestores operations
 
-## Want to know more?
-Visit <a href="">this link</a>
+## download the package
+```
+npm i @ashraafdev/firestore-orm
+```
+
+## configuration
+
+You need to have credentials
